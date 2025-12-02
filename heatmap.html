@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Agrivoltaic Map</title>
+  <link rel="stylesheet" href="https://js.arcgis.com/4.31/esri/themes/light/main.css" />
+  <style>
+    html, body, #viewDiv {
+      padding: 0;
+      margin: 0;
+      height: 100%;
+      width: 100%;
+      font-family: "Segoe UI", "Microsoft Yahei", sans-serif;
+      background: #0f172a;
+      color: #e2e8f0;
+    }
+    #info-panel {
+      max-width: 360px;
+      padding: 1rem;
+      color: #0f172a;
+      font-size: 0.95rem;
+      line-height: 1.5;
+    }
+    #info-panel h2 { margin: 0 0 0.5rem; font-size: 1.15rem; font-weight: 700; color: #0f172a; }
+    #info-panel p { margin: 0 0 0.35rem; }
+    .error { padding: 12px; background: #fee2e2; color: #991b1b; border-radius: 6px; border: 1px solid #fca5a5; }
+
+    /* self-define type */
+    #custom-legend {
+      position: absolute;
+      top: 15px;
+      right: 15px;
+      background: white;
+      padding: 12px 15px;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+      z-index: 1000;
+      font-family: "Segoe UI", Arial, sans-serif;
+    }
+    #custom-legend h4 {
+      margin: 0 0 10px 0;
+      font-size: 13px;
+      font-weight: 600;
+      color: #333;
+    }
+    .legend-content {
+      display: flex;
+      align-items: stretch;
+    }
+    .legend-bar {
+      width: 18px;
+      height: 180px;
+      border-radius: 3px;
+    }
+    .legend-bar.dli {
+      background: linear-gradient(to bottom,
+        #a50026 0%,
+        #f46d43 14.3%,
+        #fdae61 28.6%,
+        #fee090 42.9%,
+        #abd9e9 57.1%,
+        #74add1 71.4%,
+        #4575b4 85.7%,
+        #313695 100%
+      );
+    }
+    .legend-bar.prr {
+      background: linear-gradient(to bottom,
+        #006837 0%,
+        #31a354 25%,
+        #78c679 50%,
+        #c2e699 75%,
+        #ffffcc 100%
+      );
+    }
+    .legend-labels {
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      margin-left: 8px;
+      font-size: 11px;
+      color: #555;
+    }
+    .legend-labels span {
+      line-height: 1;
+    }
+  </style>
+</head>
+<body>
+  <div id="viewDiv"></div>
+
+  <!-- image sample -->
+  <div id="custom-legend">
+    <h4 id="legend-title">DLI (mol/m²/day)</h4>
+    <div class="legend-content">
+      <div class="legend-bar dli" id="legend-bar"></div>
+      <div class="legend-labels" id="legend-labels">
+        <span>45</span>
+        <span>40</span>
+        <span>35</span>
+        <span>30</span>
+        <span>25</span>
+        <span>20</span>
+        <span>15</span>
+        <span>10</span>
+      </div>
+    </div>
+  </div>
+
+  <div id="info-panel" class="esri-widget">
+    <h2 id="map-title">Agrivoltaic Map</h2>
+    <p>default: <code>./output/points_dli.csv</code></p>
+    <p>use URL to switch: <code>?file=./output/points_prr.csv</code></p>
+  </div>
+
+  <script type="module">
+    import esriConfig from "https://js.arcgis.com/4.31/@arcgis/core/config.js";
+    import Map from "https://js.arcgis.com/4.31/@arcgis/core/Map.js";
+    import MapView from "https://js.arcgis.com/4.31/@arcgis/core/views/MapView.js";
+    import FeatureLayer from "https://js.arcgis.com/4.31/@arcgis/core/layers/FeatureLayer.js";
+    import ScaleBar from "https://js.arcgis.com/4.31/@arcgis/core/widgets/ScaleBar.js";
+
+    if (window.ARCGIS_API_KEY) {
+      esriConfig.apiKey = window.ARCGIS_API_KEY;
+    }
+
+    const params = new URLSearchParams(window.location.search);
+    const csvPath = params.get("file") || "./output/points_prr.csv";
+    const viewDiv = document.getElementById("viewDiv");
+
+    // detect map type：DLI map or PRR map
+    function detectMapType(headers) {
+      if (headers.includes("dli_target_found")) return "dli";
+      if (headers.includes("prr_percent")) return "prr";
+      return "dli"; // default
+    }
+
+    async function loadCsv(path) {
+      const response = await fetch(path);
+      if (!response.ok) throw new Error(`Failed to load CSV: ${response.status} ${response.statusText}`);
+      const text = await response.text();
+      const lines = text.trim().split(/\r?\n/);
+      if (lines.length < 2) throw new Error("CSV content is empty");
+      const headers = lines[0].split(",").map((h) => h.trim());
+      const rows = lines.slice(1);
+      const mapType = detectMapType(headers);
+      const features = [];
+      let oid = 1;
+
+      for (const line of rows) {
+        if (!line.trim()) continue;
+        const cols = line.split(",");
+        const record = {};
+        headers.forEach((h, idx) => { record[h] = cols[idx]; });
+        const lon = Number(record.longitude);
+        const lat = Number(record.latitude);
+        if (Number.isNaN(lon) || Number.isNaN(lat)) continue;
+
+        // simplified
+        const attributes = {
+          oid: oid++,
+          longitude: lon,
+          latitude: lat,
+          dli_avg: Number(record.dli_avg) || 0,
+          drr_percent: Number(record.drr_percent) || 0,
+        };
+
+        // map type
+        if (mapType === "dli") {
+          attributes.dli_target_found = Number(record.dli_target_found) || 0;
+        } else {
+          attributes.prr_percent = Number(record.prr_percent) || 0;
+        }
+
+        features.push({
+          geometry: { type: "point", x: lon, y: lat, spatialReference: { wkid: 4326 } },
+          attributes,
+        });
+      }
+      return { features, mapType };
+    }
+
+    function updateLegend(mapType) {
+      const legendTitle = document.getElementById("legend-title");
+      const legendBar = document.getElementById("legend-bar");
+      const legendLabels = document.getElementById("legend-labels");
+      const mapTitle = document.getElementById("map-title");
+
+      if (mapType === "prr") {
+        legendTitle.textContent = "PRR (%)";
+        legendBar.className = "legend-bar prr";
+        legendLabels.innerHTML = `
+          <span>100</span>
+          <span>95</span>
+          <span>90</span>
+          <span>85</span>
+          <span>80</span>
+        `;
+        mapTitle.textContent = "Power Map (PRR%)";
+      } else {
+        legendTitle.textContent = "DLI (mol/m²/day)";
+        legendBar.className = "legend-bar dli";
+        legendLabels.innerHTML = `
+          <span>45</span>
+          <span>40</span>
+          <span>35</span>
+          <span>30</span>
+          <span>25</span>
+          <span>20</span>
+          <span>15</span>
+          <span>10</span>
+        `;
+        mapTitle.textContent = "DLI Map";
+      }
+    }
+
+    function render(features, mapType) {
+      console.log("loaded features:", features.length, "mapType:", mapType);
+      updateLegend(mapType);
+
+      // define map
+      const baseFields = [
+        { name: "oid", type: "oid" },
+        { name: "longitude", type: "double" },
+        { name: "latitude", type: "double" },
+        { name: "dli_avg", type: "double" },
+        { name: "drr_percent", type: "double" },
+      ];
+
+      const fields = mapType === "dli"
+        ? [...baseFields, { name: "dli_target_found", type: "double" }]
+        : [...baseFields, { name: "prr_percent", type: "double" }];
+
+      // based on map type popup
+      const popupTemplate = mapType === "dli"
+        ? {
+            title: "DLI Point",
+            content: `
+              <ul>
+                <li><b>DLI Target:</b> {dli_target_found} mol/m²/day</li>
+                <li><b>DLI Avg:</b> {dli_avg} mol/m²/day</li>
+                <li><b>DRR:</b> {drr_percent}%</li>
+                <li><b>Location:</b> ({latitude}, {longitude})</li>
+              </ul>
+            `,
+          }
+        : {
+            title: "Power Point",
+            content: `
+              <ul>
+                <li><b>PRR:</b> {prr_percent}%</li>
+                <li><b>DLI Avg:</b> {dli_avg} mol/m²/day</li>
+                <li><b>DRR:</b> {drr_percent}%</li>
+                <li><b>Location:</b> ({latitude}, {longitude})</li>
+              </ul>
+            `,
+          };
+
+      // define renderer
+      let renderer;
+      if (mapType === "dli") {
+        const dliScale = [10, 15, 20, 25, 30, 35, 40, 45];
+        const colorScale = ["#313695", "#4575b4", "#74add1", "#abd9e9", "#fee090", "#fdae61", "#f46d43", "#a50026"];
+        const colorStops = dliScale.map((value, idx) => ({ value, color: colorScale[idx] }));
+
+        renderer = {
+          type: "simple",
+          symbol: { type: "simple-marker", size: 18, outline: { color: "#ffffff", width: 2 } },
+          visualVariables: [
+            { type: "color", field: "dli_target_found", stops: colorStops },
+            { type: "size", field: "dli_target_found", minDataValue: 10, maxDataValue: 45, minSize: 12, maxSize: 28 },
+          ],
+        };
+      } else {
+        const prrScale = [80, 85, 90, 95, 100];
+        const colorScale = ["#ffffcc", "#c2e699", "#78c679", "#31a354", "#006837"];
+        const colorStops = prrScale.map((value, idx) => ({ value, color: colorScale[idx] }));
+
+        renderer = {
+          type: "simple",
+          symbol: { type: "simple-marker", size: 18, outline: { color: "#ffffff", width: 2 } },
+          visualVariables: [
+            { type: "color", field: "prr_percent", stops: colorStops },
+            { type: "size", field: "prr_percent", minDataValue: 80, maxDataValue: 100, minSize: 12, maxSize: 28 },
+          ],
+        };
+      }
+
+      const layer = new FeatureLayer({
+        source: features,
+        objectIdField: "oid",
+        spatialReference: { wkid: 4326 },
+        fields,
+        popupTemplate,
+        renderer,
+        opacity: 0.95,
+        title: mapType === "dli" ? "DLI (mol/m²/day)" : "PRR (%)",
+      });
+
+      const map = new Map({ basemap: "gray-vector", layers: [layer] });
+
+      const view = new MapView({
+        container: "viewDiv",
+        map,
+        center: [-79, 42],
+        zoom: 6,
+        popup: { dockEnabled: true, dockOptions: { position: "bottom-right", breakpoint: false } },
+      });
+
+      view.ui.add(new ScaleBar({ view, style: "line", unit: "dual" }), { position: "bottom-left", index: 0 });
+      view.ui.add("info-panel", "top-left");
+
+      layer.when().then(() => {
+        layer.queryExtent().then((res) => {
+          if (res.extent) view.goTo(res.extent.expand(2), { animate: false });
+        });
+      });
+    }
+
+    function showError(message) {
+      viewDiv.innerHTML = `<div class="error">${message}</div>`;
+    }
+
+    loadCsv(csvPath)
+      .then(({ features, mapType }) => {
+        if (!features.length) {
+          showError("No valid points found in CSV (check latitude/longitude and column names)");
+          return;
+        }
+        render(features, mapType);
+      })
+      .catch((error) => {
+        console.error(error);
+        showError(error.message || "Failed to load CSV");
+      });
+  </script>
+</body>
+</html>
