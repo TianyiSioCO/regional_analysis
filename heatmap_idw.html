@@ -1,0 +1,687 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>IDW Interpolation Map</title>
+  <link rel="stylesheet" href="https://js.arcgis.com/4.31/esri/themes/light/main.css" />
+  <style>
+    html, body, #viewDiv {
+      padding: 0;
+      margin: 0;
+      height: 100%;
+      width: 100%;
+      font-family: "Segoe UI", "Microsoft Yahei", sans-serif;
+      background: #0f172a;
+      color: #e2e8f0;
+    }
+    #info-panel {
+      max-width: 360px;
+      padding: 1rem;
+      color: #0f172a;
+      font-size: 0.95rem;
+      line-height: 1.5;
+    }
+    #info-panel h2 { margin: 0 0 0.5rem; font-size: 1.15rem; font-weight: 700; color: #0f172a; }
+    #info-panel p { margin: 0 0 0.35rem; }
+    .error { padding: 12px; background: #fee2e2; color: #991b1b; border-radius: 6px; border: 1px solid #fca5a5; }
+
+    /* Download notification */
+    #loading-overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(15, 23, 42, 0.9);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      z-index: 2000;
+    }
+    #loading-overlay.hidden { display: none; }
+    .spinner {
+      width: 50px;
+      height: 50px;
+      border: 4px solid #334155;
+      border-top-color: #3b82f6;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+    #loading-text {
+      margin-top: 16px;
+      color: #94a3b8;
+      font-size: 14px;
+    }
+
+    /* custom */
+    #custom-legend {
+      position: absolute;
+      top: 15px;
+      right: 15px;
+      background: white;
+      padding: 12px 15px;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+      z-index: 1000;
+      font-family: "Segoe UI", Arial, sans-serif;
+    }
+    #custom-legend h4 {
+      margin: 0 0 10px 0;
+      font-size: 13px;
+      font-weight: 600;
+      color: #333;
+    }
+    .legend-content {
+      display: flex;
+      align-items: stretch;
+    }
+    .legend-bar {
+      width: 18px;
+      height: 180px;
+      border-radius: 3px;
+    }
+    .legend-bar.dli {
+      background: linear-gradient(to bottom,
+        #a50026 0%,
+        #d73027 12.5%,
+        #f46d43 25%,
+        #fdae61 37.5%,
+        #fee090 50%,
+        #abd9e9 62.5%,
+        #74add1 75%,
+        #4575b4 87.5%,
+        #313695 100%
+      );
+    }
+    .legend-bar.prr {
+      background: linear-gradient(to bottom,
+        #006837 0%,
+        #31a354 25%,
+        #78c679 50%,
+        #c2e699 75%,
+        #ffffcc 100%
+      );
+    }
+    .legend-labels {
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      margin-left: 8px;
+      font-size: 11px;
+      color: #555;
+    }
+    .legend-labels span {
+      line-height: 1;
+    }
+
+    /* control panel */
+    #control-panel {
+      position: absolute;
+      bottom: 30px;
+      right: 15px;
+      background: white;
+      padding: 12px 15px;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+      z-index: 1000;
+      font-size: 12px;
+    }
+    #control-panel label {
+      display: block;
+      margin-bottom: 6px;
+      color: #333;
+      font-weight: 500;
+    }
+    #control-panel input[type="range"] {
+      width: 150px;
+    }
+    #control-panel .value {
+      display: inline-block;
+      width: 50px;
+      text-align: right;
+      color: #666;
+    }
+  </style>
+</head>
+<body>
+  <div id="viewDiv"></div>
+
+  <!-- loading notification -->
+  <div id="loading-overlay">
+    <div class="spinner"></div>
+    <div id="loading-text">Loading data…</div>
+  </div>
+
+  <!-- image custom -->
+  <div id="custom-legend">
+    <h4 id="legend-title">DLI (mol/m²/day)</h4>
+    <div class="legend-content">
+      <div class="legend-bar dli" id="legend-bar"></div>
+      <div class="legend-labels" id="legend-labels">
+        <span>45</span>
+        <span>40</span>
+        <span>35</span>
+        <span>30</span>
+        <span>25</span>
+        <span>20</span>
+        <span>15</span>
+        <span>10</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- control panel -->
+  <div id="control-panel">
+    <label>
+      Influence radius: <span id="radius-value" class="value">5 km</span>
+      <br/>
+      <input type="range" id="radius-slider" min="1" max="20" value="5" step="1" />
+    </label>
+    <label>
+      Opacity: <span id="opacity-value" class="value">0.85</span>
+      <br/>
+      <input type="range" id="opacity-slider" min="0" max="100" value="85" step="5" />
+    </label>
+    <label>
+      Resolution: <span id="resolution-value" class="value">Medium</span>
+      <br/>
+      <input type="range" id="resolution-slider" min="1" max="3" value="2" step="1" />
+    </label>
+    <button id="refresh-btn" style="margin-top:8px;padding:6px 12px;cursor:pointer;">Refresh render</button>
+  </div>
+
+  <div id="info-panel" class="esri-widget">
+    <h2 id="map-title">IDW Interpolation Map</h2>
+    <p>Use IDW inverse-distance weighted interpolation</p>
+    <p>Each point influences nearby areas within the specified radius</p>
+  </div>
+
+  <script type="module">
+    import esriConfig from "https://js.arcgis.com/4.31/@arcgis/core/config.js";
+    import Map from "https://js.arcgis.com/4.31/@arcgis/core/Map.js";
+    import MapView from "https://js.arcgis.com/4.31/@arcgis/core/views/MapView.js";
+    import ScaleBar from "https://js.arcgis.com/4.31/@arcgis/core/widgets/ScaleBar.js";
+    import Extent from "https://js.arcgis.com/4.31/@arcgis/core/geometry/Extent.js";
+    import * as projection from "https://js.arcgis.com/4.31/@arcgis/core/geometry/projection.js";
+    import SpatialReference from "https://js.arcgis.com/4.31/@arcgis/core/geometry/SpatialReference.js";
+    import Point from "https://js.arcgis.com/4.31/@arcgis/core/geometry/Point.js";
+    import MediaLayer from "https://js.arcgis.com/4.31/@arcgis/core/layers/MediaLayer.js";
+    import ImageElement from "https://js.arcgis.com/4.31/@arcgis/core/layers/support/ImageElement.js";
+    import ExtentAndRotationGeoreference from "https://js.arcgis.com/4.31/@arcgis/core/layers/support/ExtentAndRotationGeoreference.js";
+
+    if (window.ARCGIS_API_KEY) {
+      esriConfig.apiKey = window.ARCGIS_API_KEY;
+    }
+
+    const params = new URLSearchParams(window.location.search);
+    const csvPath = params.get("file") || "./output/points_prr.csv"; //change path!!
+
+    // Global variables
+    let dataPoints = [];
+    let mapType = "dli";
+    let view = null;
+    let mediaLayer = null;
+    let currentExtent = null;
+
+    // Configuration parameters
+    const config = {
+      radiusKm: 5,        // Influence radius（km）
+      opacity: 0.85,      
+      resolution: 2,      // Resolution level 1=low 2=mid 3=high
+      power: 2,           // IDW power
+    };
+
+    // DLI color ramp (blue → yellow → red)
+    const dliColorStops = [
+      { value: 10, color: [49, 54, 149] },      // deep blue
+      { value: 15, color: [69, 117, 180] },     // blue
+      { value: 20, color: [116, 173, 209] },    // light blue
+      { value: 25, color: [171, 217, 233] },    // pale blue
+      { value: 30, color: [254, 224, 144] },    // light yellow
+      { value: 35, color: [253, 174, 97] },     // orange
+      { value: 40, color: [244, 109, 67] },     // deep orange
+      { value: 45, color: [215, 48, 39] },      // red
+      { value: 50, color: [165, 0, 38] },       // deep red
+    ];
+
+    // PRR color ramp (light yellow → deep green)
+    const prrColorStops = [
+      { value: 0, color: [255, 255, 204] },     // light yellow
+      { value: 5, color: [194, 230, 153] },     // light green
+      { value: 10, color: [120, 198, 121] },    // green
+      { value: 15, color: [49, 163, 84] },      // darker green
+      { value: 20, color: [0, 104, 55] },       // deep green
+    ];
+
+    function setLoadingText(text) {
+      document.getElementById("loading-text").textContent = text;
+    }
+
+    function hideLoading() {
+      document.getElementById("loading-overlay").classList.add("hidden");
+    }
+
+    function showLoading() {
+      document.getElementById("loading-overlay").classList.remove("hidden");
+    }
+
+    // Detect map type
+    function detectMapType(headers) {
+      if (headers.includes("dli_target_found")) return "dli";
+      if (headers.includes("prr_percent")) return "prr";
+      return "dli";
+    }
+
+    // Load CSV
+    async function loadCsv(path) {
+      const response = await fetch(path);
+      if (!response.ok) throw new Error(`Failed to load CSV: ${response.status}`);
+      const text = await response.text();
+      const lines = text.trim().split(/\r?\n/);
+      if (lines.length < 2) throw new Error("CSV content is empty");
+
+      const headers = lines[0].split(",").map((h) => h.trim());
+      const rows = lines.slice(1);
+      mapType = detectMapType(headers);
+
+      const points = [];
+      for (const line of rows) {
+        if (!line.trim()) continue;
+        const cols = line.split(",");
+        const record = {};
+        headers.forEach((h, idx) => { record[h] = cols[idx]; });
+
+        const lon = Number(record.longitude);
+        const lat = Number(record.latitude);
+        if (Number.isNaN(lon) || Number.isNaN(lat)) continue;
+
+        const value = mapType === "dli"
+          ? Number(record.dli_target_found) || 0
+          : Number(record.prr_percent) || 0;
+
+        points.push({ lon, lat, value });
+      }
+      return points;
+    }
+
+    // update image
+    function updateLegend() {
+      const legendTitle = document.getElementById("legend-title");
+      const legendBar = document.getElementById("legend-bar");
+      const legendLabels = document.getElementById("legend-labels");
+      const mapTitle = document.getElementById("map-title");
+
+      if (mapType === "prr") {
+        legendTitle.textContent = "PRR (%)";
+        legendBar.className = "legend-bar prr";
+        legendLabels.innerHTML = `
+          <span>20</span>
+          <span>15</span>
+          <span>10</span>
+          <span>5</span>
+          <span>0</span>
+        `;
+        mapTitle.textContent = "PRR Interpolation Map";
+      } else {
+        legendTitle.textContent = "DLI (mol/m²/day)";
+        legendBar.className = "legend-bar dli";
+        legendLabels.innerHTML = `
+          <span>45</span>
+          <span>40</span>
+          <span>35</span>
+          <span>30</span>
+          <span>25</span>
+          <span>20</span>
+          <span>15</span>
+          <span>10</span>
+        `;
+        mapTitle.textContent = "DLI Interpolation Map";
+      }
+    }
+
+    // Compute distance between 2 pts (Haversine formula, returns km)
+    function haversineDistance(lon1, lat1, lon2, lat2) {
+      const R = 6371; // Earth radius (km）
+      const dLat = (lat2 - lat1) * Math.PI / 180;
+      const dLon = (lon2 - lon1) * Math.PI / 180;
+      const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+                Math.sin(dLon / 2) * Math.sin(dLon / 2);
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+      return R * c;
+    }
+
+    // IDW interpolation
+    function idwInterpolate(lon, lat, points, radiusKm, power) {
+      let weightSum = 0;
+      let valueSum = 0;
+      let hasNearPoint = false;
+
+      for (const p of points) {
+        const dist = haversineDistance(lon, lat, p.lon, p.lat);
+
+        if (dist < 0.001) {
+          // !!If very close to a point, return that point’s value directly (continuous)
+          return p.value;
+        }
+
+        if (dist <= radiusKm) {
+          hasNearPoint = true;
+          const weight = 1 / Math.pow(dist, power);
+          weightSum += weight;
+          valueSum += weight * p.value;
+        }
+      }
+
+      if (!hasNearPoint) {
+        return null; // not in the influence range of all pts
+      }
+
+      return valueSum / weightSum;
+    }
+
+    // Map value to color
+    function valueToColor(value, colorStops) {
+      if (value === null) return [0, 0, 0, 0]; // Transparent
+
+      // Find the interval containing the value
+      for (let i = 0; i < colorStops.length - 1; i++) {
+        const low = colorStops[i];
+        const high = colorStops[i + 1];
+
+        if (value <= low.value) {
+          return [...low.color, 255];
+        }
+
+        if (value >= low.value && value <= high.value) {
+          const t = (value - low.value) / (high.value - low.value);
+          return [
+            Math.round(low.color[0] + t * (high.color[0] - low.color[0])),
+            Math.round(low.color[1] + t * (high.color[1] - low.color[1])),
+            Math.round(low.color[2] + t * (high.color[2] - low.color[2])),
+            255
+          ];
+        }
+      }
+
+      // Above maximum value
+      const last = colorStops[colorStops.length - 1];
+      return [...last.color, 255];
+    }
+
+    // Build spatial index (simple grid), use plain objects to avoid conflicts with ArcGIS Map
+    function buildSpatialIndex(points, cellSize) {
+      const index = {};
+
+      for (const p of points) {
+        const cellX = Math.floor(p.lon / cellSize);
+        const cellY = Math.floor(p.lat / cellSize);
+        const key = `${cellX},${cellY}`;
+
+        if (!index[key]) {
+          index[key] = [];
+        }
+        index[key].push(p);
+      }
+
+      return { index, cellSize };
+    }
+
+    // check nearby points from spatial index
+    function queryNearbyPoints(lon, lat, spatialIndex, radiusKm) {
+      const { index, cellSize } = spatialIndex;
+      const searchRadius = Math.ceil(radiusKm / 111 / cellSize) + 1; // Approximate conversion
+
+      const cellX = Math.floor(lon / cellSize);
+      const cellY = Math.floor(lat / cellSize);
+
+      const nearby = [];
+      for (let dx = -searchRadius; dx <= searchRadius; dx++) {
+        for (let dy = -searchRadius; dy <= searchRadius; dy++) {
+          const key = `${cellX + dx},${cellY + dy}`;
+          if (index[key]) {
+            nearby.push(...index[key]);
+          }
+        }
+      }
+
+      return nearby;
+    }
+
+    // Generate IDW raster image
+    async function generateIDWRaster(extent, width, height) {
+      setLoadingText("Generating interpolation raster…");
+
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext("2d");
+      const imageData = ctx.createImageData(width, height);
+
+      const colorStops = mapType === "dli" ? dliColorStops : prrColorStops;
+
+      // Build spatial index
+      const cellSize = 0.5; // degree
+      const spatialIndex = buildSpatialIndex(dataPoints, cellSize);
+
+      const xMin = extent.xmin;
+      const xMax = extent.xmax;
+      const yMin = extent.ymin;
+      const yMax = extent.ymax;
+
+      const dx = (xMax - xMin) / width;
+      const dy = (yMax - yMin) / height;
+
+      // Batch processing to avoid blocking
+      const batchSize = 1000;
+      let processed = 0;
+      const total = width * height;
+
+      for (let y = 0; y < height; y++) {
+        const lat = yMax - y * dy; // Top to bottom
+
+        for (let x = 0; x < width; x++) {
+          const lon = xMin + x * dx;
+
+          // Query nearby points
+          const nearby = queryNearbyPoints(lon, lat, spatialIndex, config.radiusKm);
+
+          // IDW interpolation
+          const value = idwInterpolate(lon, lat, nearby, config.radiusKm, config.power);
+
+          // Convert to color
+          const color = valueToColor(value, colorStops);
+
+          const idx = (y * width + x) * 4;
+          imageData.data[idx] = color[0];
+          imageData.data[idx + 1] = color[1];
+          imageData.data[idx + 2] = color[2];
+          imageData.data[idx + 3] = Math.round(color[3] * config.opacity);
+
+          processed++;
+        }
+
+        // Update progress every N rows processed
+        if (y % 20 === 0) {
+          setLoadingText(`Generating interpolation raster… ${Math.round(y / height * 100)}%`);
+          await new Promise(r => setTimeout(r, 0)); // Let UI update
+        }
+      }
+
+      ctx.putImageData(imageData, 0, 0);
+      return canvas.toDataURL("image/png");
+    }
+
+    // Render IDW layer
+    async function renderIDWLayer() {
+      if (!view || dataPoints.length === 0) return;
+
+      showLoading();
+      setLoadingText("Calculating render extent…");
+
+      // Get current view extent or data extent
+      let extent;
+      if (currentExtent) {
+        extent = currentExtent;
+      } else {
+        // Compute data extent
+        let minLon = Infinity, maxLon = -Infinity;
+        let minLat = Infinity, maxLat = -Infinity;
+
+        for (const p of dataPoints) {
+          minLon = Math.min(minLon, p.lon);
+          maxLon = Math.max(maxLon, p.lon);
+          minLat = Math.min(minLat, p.lat);
+          maxLat = Math.max(maxLat, p.lat);
+        }
+
+        // Expand extent
+        const padding = config.radiusKm / 111; // Approximate conversion to degrees
+        extent = new Extent({
+          xmin: minLon - padding,
+          xmax: maxLon + padding,
+          ymin: minLat - padding,
+          ymax: maxLat + padding,
+          spatialReference: { wkid: 4326 }
+        });
+        currentExtent = extent;
+      }
+
+      // Determine pixel size based on resolution setting
+      const resolutionFactors = { 1: 400, 2: 600, 3: 900 };
+      const baseSize = resolutionFactors[config.resolution] || 600;
+
+      const aspectRatio = (extent.xmax - extent.xmin) / (extent.ymax - extent.ymin);
+      let width, height;
+      if (aspectRatio > 1) {
+        width = baseSize;
+        height = Math.round(baseSize / aspectRatio);
+      } else {
+        height = baseSize;
+        width = Math.round(baseSize * aspectRatio);
+      }
+
+      // Generate IDW raster
+      const imageUrl = await generateIDWRaster(extent, width, height);
+
+      // Remove old layer
+      if (mediaLayer) {
+        view.map.remove(mediaLayer);
+      }
+
+      // Create new MediaLayer
+      const imageElement = new ImageElement({
+        image: imageUrl,
+        georeference: new ExtentAndRotationGeoreference({
+          extent: extent
+        })
+      });
+
+      mediaLayer = new MediaLayer({
+        source: [imageElement],
+        title: "IDW Interpolation",
+        opacity: 1
+      });
+
+      view.map.add(mediaLayer, 0); // Add to base layer
+
+      hideLoading();
+    }
+
+    // initialize map
+    async function initMap() {
+      setLoadingText("Loading CSV data…");
+
+      try {
+        dataPoints = await loadCsv(csvPath);
+
+        if (dataPoints.length === 0) {
+          throw new Error("No valid data points found");
+        }
+
+        console.log(`Loaded ${dataPoints.length} points, type: ${mapType}`);
+        updateLegend();
+
+        setLoadingText("Initializing map…");
+
+        // Compute data center
+        let sumLon = 0, sumLat = 0;
+        for (const p of dataPoints) {
+          sumLon += p.lon;
+          sumLat += p.lat;
+        }
+        const centerLon = sumLon / dataPoints.length;
+        const centerLat = sumLat / dataPoints.length;
+
+        const map = new Map({ basemap: "gray-vector" });
+
+        view = new MapView({
+          container: "viewDiv",
+          map,
+          center: [centerLon, centerLat],
+          zoom: 7,
+        });
+
+        view.ui.add(new ScaleBar({ view, style: "line", unit: "dual" }), { position: "bottom-left" });
+        view.ui.add("info-panel", "top-left");
+
+        await view.when();
+
+        // Render IDW
+        await renderIDWLayer();
+
+        // Jump to data extent
+        if (currentExtent) {
+          view.goTo(currentExtent.expand(1.2), { animate: false });
+        }
+
+      } catch (error) {
+        console.error(error);
+        hideLoading();
+        document.getElementById("viewDiv").innerHTML =
+          `<div class="error" style="margin:20px;">${error.message}</div>`;
+      }
+    }
+
+    // Bind control panel events
+    function setupControls() {
+      const radiusSlider = document.getElementById("radius-slider");
+      const radiusValue = document.getElementById("radius-value");
+      const opacitySlider = document.getElementById("opacity-slider");
+      const opacityValue = document.getElementById("opacity-value");
+      const resolutionSlider = document.getElementById("resolution-slider");
+      const resolutionValue = document.getElementById("resolution-value");
+      const refreshBtn = document.getElementById("refresh-btn");
+
+      radiusSlider.addEventListener("input", () => {
+        config.radiusKm = parseInt(radiusSlider.value);
+        radiusValue.textContent = `${config.radiusKm} km`;
+      });
+
+      opacitySlider.addEventListener("input", () => {
+        config.opacity = parseInt(opacitySlider.value) / 100;
+        opacityValue.textContent = config.opacity.toFixed(2);
+      });
+
+      const resLabels = { 1: "低", 2: "中", 3: "高" };
+      resolutionSlider.addEventListener("input", () => {
+        config.resolution = parseInt(resolutionSlider.value);
+        resolutionValue.textContent = resLabels[config.resolution];
+      });
+
+      refreshBtn.addEventListener("click", async () => {
+        await renderIDWLayer();
+      });
+    }
+
+    // initiate
+    setupControls();
+    initMap();
+  </script>
+</body>
+</html>
