@@ -17,19 +17,19 @@ EMAIL = "magztianyi@gmail.com" #change email
 BASE_URL = "https://developer.nrel.gov/api/nsrdb/v2/solar/nsrdb-GOES-tmy-v4-0-0-download.json"
 
 # New York State boundary (simplified bounding box)
-# NY_BOUNDS = {
-#     "lat_min": 40.5,
-#     "lat_max": 45.0,
-#     "lon_min": -79.8,
-#     "lon_max": -71.8
-# }
-
-MA_BOUNDS = {
-    "lat_min": 41.2,
-    "lat_max": 42.9,
-    "lon_min": -73.5,
-    "lon_max": -69.9
+NY_BOUNDS = {
+    "lat_min": 40.5,
+    "lat_max": 45.0,
+    "lon_min": -79.8,
+    "lon_max": -71.8
 }
+
+# MA_BOUNDS = {
+#     "lat_min": 41.2,
+#     "lat_max": 42.9,
+#     "lon_min": -73.5,
+#     "lon_max": -69.9
+# }
 
 
 # Grid resolution (degrees) NSRDB data roughly 0.04, fix!
@@ -218,7 +218,7 @@ def main():
 
     # Generate coordinates
     print("Generate Coordinates...")
-    points = generate_grid_points(MA_BOUNDS, GRID_RESOLUTION, MAX_POINTS)
+    points = generate_grid_points(NY_BOUNDS, GRID_RESOLUTION, MAX_POINTS)
     print(f"Generate {len(points)} number of coordinates")
     print()
 

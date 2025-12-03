@@ -668,7 +668,7 @@
         opacityValue.textContent = config.opacity.toFixed(2);
       });
 
-      const resLabels = { 1: "低", 2: "中", 3: "高" };
+      const resLabels = { 1: "Low", 2: "Medium", 3: "High" };
       resolutionSlider.addEventListener("input", () => {
         config.resolution = parseInt(resolutionSlider.value);
         resolutionValue.textContent = resLabels[config.resolution];
